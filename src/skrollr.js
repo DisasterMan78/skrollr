@@ -64,8 +64,8 @@
 
 	var rxTrim = /^\s+|\s+$/g;
 
-	//Find all data-attributes. data-[_constant]-[offset]-[anchor]-[anchor].
-	var rxKeyframeAttribute = /^data(?:-(_\w+))?(?:-?(-?\d*\.?\d+p?))?(?:-?(start|end|top|center|bottom))?(?:-?(top|center|bottom))?$/;
+	//Find all data-attributes. data-[_prefix]-[_constant]-[offset]-[anchor]-[anchor].
+	var rxKeyframeAttribute = /^data(?:-(~\w+))?(?:-(_\w+))?(?:-?(-?\d*\.?\d+p?))?(?:-?(start|end|top|center|bottom))?(?:-?(top|center|bottom))?$/;
 
 	var rxPropValue = /\s*(@?[\w\-\[\]]+)\s*:\s*(.+?)\s*(?:;|$)/gi;
 
@@ -231,6 +231,13 @@
 		_instance = this;
 
 		options = options || {};
+
+		_prefix = options.prefix || {};
+
+		// Convert single prefix into prefix array
+		if( typeof _prefix === 'string' ) {
+			_prefix = [ _prefix ];
+		}
 
 		_constants = options.constants || {};
 
@@ -409,17 +416,86 @@
 					continue;
 				}
 
+				var pushThis = false;
+
 				var kf = {
-					props: attr.value,
+					//Parse the property string to objects
+					props: _parseProps(attr.value),
 					//Point back to the element as well.
 					element: el,
 					//The name of the event which this keyframe will fire, if emitEvents is
 					eventType: attr.name.replace(rxCamelCase, rxCamelCaseFn)
 				};
 
-				keyFrames.push(kf);
+				// Check for prefix
+				var kfPrefix = match[1];
 
-				var constant = match[1];
+				if(kfPrefix) {
+					var breakpointConstantRules = {};
+					//Strip the tilda prefix.
+					kfPrefix = kfPrefix.substr(1);
+
+					// Loop through options.prefix, looking for first match,
+					// Ignore any subsequent prefixes
+					for( var px in _prefix ) {
+						if(kfPrefix === _prefix[ px ]) {
+
+							//Check for higher priority prefix - ignore this keyframe if found
+							if( px > 0 )
+							{
+								var mergeProps = {};
+								if(typeof match[ 2 ] == 'undefined')
+								{
+									var constant = '';
+								}
+								else{
+									var constant = '-' + match[ 2 ];
+								}
+								if(typeof match[ 3 ] == 'undefined')
+								{
+									var modifier = '';
+								}
+								else{
+									var modifier = '-' + match[ 3 ];
+								}
+								var hasPriorKeyframe = false;
+
+								for (var i = px; i = 0; i--) {
+									var priorKeyframe = 'data-~' + _prefix[ i - 1 ] + constant + modifier;
+										if( el.hasAttribute( priorKeyframe ) )
+										{
+											hasPriorKeyframe = true;
+											var priorProps = _parseProps(el.attributes[priorKeyframe].value);
+
+											for( var prop in kf.props) {
+												priorProps[ prop ] = kf.props[ prop ];
+											}
+											for( var prop in priorProps) {
+												mergeProps[ prop ] = priorProps[ prop ];
+											}
+										}
+								}
+								if( hasPriorKeyframe === false )
+								{
+									keyFrames.push(kf);
+									break;
+								} else {
+									kf.props = mergeProps;
+									break;
+								}
+							}
+							else
+							{
+								keyFrames.push(kf);
+								break;
+							}
+						}
+					}
+				}else{
+					keyFrames.push(kf);
+				}
+
+				var constant = match[2];
 
 				if(constant) {
 					//Strip the underscore prefix.
@@ -427,7 +503,7 @@
 				}
 
 				//Get the key frame offset.
-				var offset = match[2];
+				var offset = match[3];
 
 				//Is it a percentage offset?
 				if(/p$/.test(offset)) {
@@ -437,10 +513,10 @@
 					kf.offset = (offset | 0);
 				}
 
-				var anchor1 = match[3];
+				var anchor1 = match[4];
 
 				//If second anchor is not set, the first will be taken for both.
-				var anchor2 = match[4] || anchor1;
+				var anchor2 = match[5] || anchor1;
 
 				//"absolute" (or "classic") mode, where numbers mean absolute scroll offset.
 				if(!anchor1 || anchor1 === ANCHOR_START || anchor1 === ANCHOR_END) {
@@ -512,9 +588,6 @@
 			if(sk === undefined) {
 				continue;
 			}
-
-			//Parse the property string to objects
-			_parseProps(sk);
 
 			//Fill key frames with missing properties from left and right
 			_fillProps(sk);
@@ -1156,48 +1229,40 @@
 	};
 
 	/**
-	 * Parses the properties for each key frame of the given skrollable.
+	 * Parses the CSS properties string to an object
 	 */
-	var _parseProps = function(skrollable) {
-		//Iterate over all key frames
-		var keyFrameIndex = 0;
-		var keyFramesLength = skrollable.keyFrames.length;
+	var _parseProps = function(propsString) {
+		var easing;
+		var value;
+		var prop;
+		var props = {};
 
-		for(; keyFrameIndex < keyFramesLength; keyFrameIndex++) {
-			var frame = skrollable.keyFrames[keyFrameIndex];
-			var easing;
-			var value;
-			var prop;
-			var props = {};
+		var match;
 
-			var match;
+		while((match = rxPropValue.exec(propsString)) !== null) {
+			prop = match[1];
+			value = match[2];
 
-			while((match = rxPropValue.exec(frame.props)) !== null) {
-				prop = match[1];
-				value = match[2];
+			easing = prop.match(rxPropEasing);
 
-				easing = prop.match(rxPropEasing);
-
-				//Is there an easing specified for this prop?
-				if(easing !== null) {
-					prop = easing[1];
-					easing = easing[2];
-				} else {
-					easing = DEFAULT_EASING;
-				}
-
-				//Exclamation point at first position forces the value to be taken literal.
-				value = value.indexOf('!') ? _parseProp(value) : [value.slice(1)];
-
-				//Save the prop for this key frame with his value and easing function
-				props[prop] = {
-					value: value,
-					easing: easings[easing]
-				};
+			//Is there an easing specified for this prop?
+			if(easing !== null) {
+				prop = easing[1];
+				easing = easing[2];
+			} else {
+				easing = DEFAULT_EASING;
 			}
 
-			frame.props = props;
+			//Exclamation point at first position forces the value to be taken literal.
+			value = value.indexOf('!') ? _parseProp(value) : [value.slice(1)];
+
+			//Save the prop for this key frame with his value and easing function
+			props[prop] = {
+				value: value,
+				easing: easings[easing]
+			};
 		}
+		return props;
 	};
 
 	/**
@@ -1703,6 +1768,7 @@
 	var _maxKeyFrame = 0;
 
 	var _scale = 1;
+	var _prefix;
 	var _constants;
 
 	var _mobileDeceleration;
