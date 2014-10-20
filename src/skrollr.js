@@ -1086,10 +1086,12 @@
 
 					for(key in left.props) {
 						if(hasProp.call(left.props, key)) {
-							var progress = (frame - left.frame) / (right.frame - left.frame);
+							var time     = frame - left.frame,
+									duration = right.frame - left.frame,
+									progress = time / duration;
 
 							//Transform the current progress using the given easing function.
-							progress = left.props[key].easing(progress);
+							progress = left.props[key].easing(progress, time, duration);
 
 							//Interpolate between the two values
 							value = _calcInterpolation(left.props[key].value, right.props[key].value, progress);
@@ -1142,6 +1144,8 @@
 		//If there's an animation, which ends in current render call, call the callback after rendering.
 		var afterAnimationCallback;
 		var now = _now();
+		var time;
+		var duration;
 		var progress;
 
 		//Before actually rendering handle the scroll animation, if any.
@@ -1153,7 +1157,9 @@
 				_scrollAnimation = undefined;
 			} else {
 				//Map the current progress to the new progress using given easing function.
-				progress = _scrollAnimation.easing((now - _scrollAnimation.startTime) / _scrollAnimation.duration);
+				time     = now - _scrollAnimation.startTime;
+				duration = _scrollAnimation.duration;
+				progress = _scrollAnimation.easing( time / duration, time, duration);
 
 				renderTop = (_scrollAnimation.startTop + progress * _scrollAnimation.topDiff) | 0;
 			}
